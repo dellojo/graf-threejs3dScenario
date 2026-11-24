@@ -1,0 +1,493 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+	<title>Parque Interactivo 3D</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+
+	<!-- Icono personalizado del parque -->
+	<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232c5035'/%3E%3Ccircle cx='32' cy='23' r='16' fill='%239be15d'/%3E%3Ccircle cx='20' cy='31' r='10' fill='%237ac943'/%3E%3Ccircle cx='44' cy='31' r='10' fill='%237ac943'/%3E%3Crect x='28' y='34' width='8' height='19' rx='2' fill='%238b5a2b'/%3E%3C/svg%3E">
+
+	<style>
+		html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-family: Arial, Helvetica, sans-serif; }
+		#loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font: bold 24px Arial, sans-serif; background: #000; z-index: 20; text-align: center; padding: 20px; }
+		#panel { position: fixed; top: 12px; left: 12px; background: rgba(0, 0, 0, 0.6); color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 13px; line-height: 1.6; pointer-events: none; z-index: 10; }
+		#panel h2 { margin: 0 0 6px; font-size: 15px; color: #9be15d; }
+		#panel b { display: inline-block; min-width: 70px; color: #ffd54f; }
+		footer { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(10, 25, 10, 0.75); color: #fff; padding: 8px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; pointer-events: none; z-index: 10; }
+		footer h1 { margin: 0; font-family: Arial, Helvetica, sans-serif; font-weight: bold; font-size: 26px; color: #9be15d; }
+		footer .equipo { font-size: 13px; line-height: 1.5; text-align: right; }
+	</style>
+</head>
+<body>
+
+	<div id="loading">Cargando escenario…</div>
+
+	<div id="panel">
+		<h2>Tablero de instrucciones</h2>
+		<div><b>W</b> Caminar</div>
+		<div><b>Ctrl</b> Correr</div>
+		<div><b>Shift</b> Detenerse</div>
+		<div><b>A / ←</b> Girar 90° a la izquierda</div>
+		<div><b>D / →</b> Girar 90° a la derecha</div>
+		<div><b>Ratón</b> Arrastrar: cámara · Rueda: zoom</div>
+		<div style="margin-top:6px;">Estado: <span id="estado" style="color:#9be15d;font-weight:bold;">Parado</span></div>
+	</div>
+
+	<footer>
+		<h1>El Parque</h1>
+		<div class="equipo">
+			<strong>Integrantes del equipo</strong><br>
+			Chincoya Dominguez Guillermo — No. control: 23200820<br>
+			Gutiérrez del Lojo Carlos Uriel — No. control: 23200844<br>
+			Padilla Paz Luis Daniel — No. control: 23201344
+		</div>
+	</footer>
+
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "../build/three.module.js",
+				"three/addons/": "./jsm/"
+			}
+		}
+	</script>
+
+	<script type="module">
+
+		import * as THREE from 'three';
+		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+		import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+		import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+
+		const LIMITE = 950;
+		const clock = new THREE.Clock();
+
+		let camera, scene, renderer, controls, sol;
+		let mixer, model;
+		let accionActual = null;
+		const actions = {};
+		const objetos = [];
+
+		const jugador = {
+			pos: new THREE.Vector3( 0, 0, 0 ),
+			angulo: 0,
+			anguloMeta: 0,
+			radio: 30,
+			moviendo: false,
+			paso: 'walk'
+		};
+
+		const estadoEl = document.getElementById( 'estado' );
+		const cargandoEl = document.getElementById( 'loading' );
+
+		init();
+
+		function init() {
+
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color( 0xd5d9dd );
+			scene.fog = new THREE.Fog( 0xd5d9dd, 500, 1700 );
+
+			camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 5000 );
+			camera.position.set( 0, 170, - 330 );
+
+			renderer = new THREE.WebGLRenderer( { antialias: true } );
+			renderer.setPixelRatio( window.devicePixelRatio );
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			renderer.shadowMap.enabled = true;
+			renderer.setAnimationLoop( animate );
+			document.body.appendChild( renderer.domElement );
+
+			controls = new OrbitControls( camera, renderer.domElement );
+			controls.target.set( 0, 100, 0 );
+			controls.enablePan = false;
+			controls.enableDamping = true;
+			controls.minDistance = 150;
+			controls.maxDistance = 700;
+			controls.maxPolarAngle = Math.PI / 2 - 0.05;
+			controls.update();
+
+			scene.add( new THREE.HemisphereLight( 0xffffff, 0x556b2f, 1.2 ) );
+
+			sol = new THREE.DirectionalLight( 0xfff2d6, 2.5 );
+			sol.castShadow = true;
+			sol.shadow.mapSize.set( 2048, 2048 );
+			const sc = sol.shadow.camera;
+			sc.left = - 350; sc.right = 350; sc.top = 350; sc.bottom = - 350; sc.near = 10; sc.far = 1500;
+			scene.add( sol );
+			scene.add( sol.target );
+
+			const texPiso = new THREE.TextureLoader().load( 'textures/pasto.jpg' );
+			texPiso.wrapS = texPiso.wrapT = THREE.RepeatWrapping;
+			texPiso.repeat.set( 30, 30 );
+			texPiso.colorSpace = THREE.SRGBColorSpace;
+			texPiso.anisotropy = 8;
+
+			const piso = new THREE.Mesh(
+				new THREE.PlaneGeometry( 2000, 2000 ),
+				new THREE.MeshStandardMaterial( { map: texPiso, roughness: 1 } )
+			);
+			piso.rotation.x = - Math.PI / 2;
+			piso.receiveShadow = true;
+			scene.add( piso );
+
+			crearBordes();
+			crearObjetos();
+
+			new RGBELoader().load( 'models/rgbe/fondo.hdr', function ( texture ) {
+
+				texture.mapping = THREE.EquirectangularReflectionMapping;
+				scene.background = texture;
+				scene.environment = texture;
+
+			} );
+
+			const listener = new THREE.AudioListener();
+			camera.add( listener );
+			const musica = new THREE.Audio( listener );
+			new THREE.AudioLoader().load( 'models/rgbe/musica.mp3', function ( buffer ) {
+
+				musica.setBuffer( buffer );
+				musica.setLoop( true );
+				musica.setVolume( 0.4 );
+
+			} );
+
+			function iniciarAudio() {
+
+				if ( listener.context.state === 'suspended' ) listener.context.resume();
+				if ( musica.buffer && ! musica.isPlaying ) musica.play();
+
+			}
+
+			window.addEventListener( 'click', iniciarAudio );
+
+			window.addEventListener( 'keydown', function ( e ) {
+
+				iniciarAudio();
+				if ( e.repeat ) return;
+
+				switch ( e.code ) {
+
+					case 'KeyW': jugador.paso = 'walk'; jugador.moviendo = true; break;
+					case 'ControlLeft': case 'ControlRight': jugador.paso = 'run'; jugador.moviendo = true; break;
+					case 'ShiftLeft': case 'ShiftRight': jugador.moviendo = false; break;
+					case 'KeyA': case 'ArrowLeft': jugador.anguloMeta += Math.PI / 2; break;
+					case 'KeyD': case 'ArrowRight': jugador.anguloMeta -= Math.PI / 2; break;
+
+				}
+
+			} );
+
+			window.addEventListener( 'resize', function () {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			} );
+
+			cargarPersonaje().then( function () {
+
+				cargandoEl.style.display = 'none';
+
+			} ).catch( function ( err ) {
+
+				cargandoEl.textContent = 'No se pudieron cargar los modelos: ' + ( err.message || err );
+				console.error( err );
+
+			} );
+
+		}
+
+		async function cargarPersonaje() {
+
+			const loader = new FBXLoader();
+
+			const [ idleFbx, walkFbx, runFbx ] = await Promise.all( [
+				loader.loadAsync( 'models/fbx/Idle.fbx' ),
+				loader.loadAsync( 'models/fbx/Walking.fbx' ),
+				loader.loadAsync( 'models/fbx/Running.fbx' )
+			] );
+
+			model = idleFbx;
+			model.traverse( function ( child ) {
+
+				if ( child.isMesh ) {
+
+					child.castShadow = true;
+					child.receiveShadow = true;
+					child.frustumCulled = false;
+
+				}
+
+			} );
+			scene.add( model );
+
+			mixer = new THREE.AnimationMixer( model );
+			actions.idle = mixer.clipAction( idleFbx.animations[ 0 ] );
+			actions.walk = mixer.clipAction( walkFbx.animations[ 0 ] );
+			actions.run = mixer.clipAction( runFbx.animations[ 0 ] );
+
+			actions.idle.play();
+			accionActual = 'idle';
+
+		}
+
+		function cambiarAccion( nombre ) {
+
+			if ( nombre === accionActual ) return;
+
+			const nueva = actions[ nombre ];
+			const anterior = actions[ accionActual ];
+
+			nueva.reset().fadeIn( 0.25 ).play();
+			if ( anterior ) anterior.fadeOut( 0.25 );
+
+			accionActual = nombre;
+			estadoEl.textContent = { idle: 'Parado', walk: 'Caminando', run: 'Corriendo' }[ nombre ];
+
+		}
+
+		function crearBordes() {
+
+			const mat = new THREE.MeshStandardMaterial( { color: 0x7a5230, roughness: 0.8 } );
+			const largo = 2040, alto = 60, grosor = 20, borde = 1000;
+
+			[
+				[ 0, borde, largo, grosor ],
+				[ 0, - borde, largo, grosor ],
+				[ borde, 0, grosor, largo ],
+				[ - borde, 0, grosor, largo ]
+			].forEach( function ( [ x, z, w, d ] ) {
+
+				const muro = new THREE.Mesh( new THREE.BoxGeometry( w, alto, d ), mat );
+				muro.position.set( x, alto / 2, z );
+				muro.castShadow = true;
+				muro.receiveShadow = true;
+				scene.add( muro );
+
+			} );
+
+		}
+
+		function agregarObjeto( mesh, x, z, radio, tipo, opciones = {} ) {
+
+			mesh.position.x = x;
+			mesh.position.z = z;
+			mesh.castShadow = true;
+			mesh.receiveShadow = true;
+			scene.add( mesh );
+
+			objetos.push( Object.assign( {
+				mesh, radio, tipo,
+				vel: new THREE.Vector3(),
+				friccion: 2,
+				empuje: 1,
+				rueda: false
+			}, opciones ) );
+
+		}
+
+		function crearObjetos() {
+
+			const matRoca = new THREE.MeshStandardMaterial( { color: 0x7d7d7d, roughness: 0.95, flatShading: true } );
+			[ [ 220, 320, 50 ], [ - 320, 520, 60 ] ].forEach( function ( [ x, z, r ] ) {
+
+				const roca = new THREE.Mesh( new THREE.IcosahedronGeometry( r, 1 ), matRoca );
+				roca.scale.y = 0.75;
+				roca.position.y = r * 0.75;
+				agregarObjeto( roca, x, z, r, 'estatico' );
+
+			} );
+
+			const c = document.createElement( 'canvas' );
+			c.width = c.height = 128;
+			const g = c.getContext( '2d' );
+			for ( let i = 0; i < 8; i ++ ) {
+
+				for ( let j = 0; j < 8; j ++ ) {
+
+					g.fillStyle = ( i + j ) % 2 === 0 ? '#ff6a00' : '#ffffff';
+					g.fillRect( i * 16, j * 16, 16, 16 );
+
+				}
+
+			}
+			const texBola = new THREE.CanvasTexture( c );
+			texBola.colorSpace = THREE.SRGBColorSpace;
+
+			const bola = new THREE.Mesh(
+				new THREE.SphereGeometry( 30, 32, 16 ),
+				new THREE.MeshStandardMaterial( { map: texBola, roughness: 0.35, metalness: 0.1 } )
+			);
+			bola.position.y = 30;
+			agregarObjeto( bola, 60, 250, 30, 'dinamico', { friccion: 0.9, empuje: 1.8, rueda: true } );
+
+			const matCaja = new THREE.MeshStandardMaterial( { color: 0x9a6a35, roughness: 0.8 } );
+			[ [ - 200, 220 ], [ 260, - 150 ] ].forEach( function ( [ x, z ] ) {
+
+				const caja = new THREE.Mesh( new THREE.BoxGeometry( 70, 70, 70 ), matCaja );
+				caja.position.y = 35;
+				agregarObjeto( caja, x, z, 40, 'dinamico', { friccion: 4, empuje: 0.8 } );
+
+			} );
+
+			const patrulla = new THREE.Mesh(
+				new THREE.BoxGeometry( 90, 90, 90 ),
+				new THREE.MeshStandardMaterial( { color: 0xc62828, roughness: 0.4, metalness: 0.3 } )
+			);
+			patrulla.position.y = 45;
+			agregarObjeto( patrulla, 0, 600, 55, 'cinematico', { velocidad: 130, rango: 400, origenX: 0, dir: 1 } );
+
+		}
+
+		function actualizarFisica( dt, velJugador ) {
+
+			for ( const o of objetos ) {
+
+				const p = o.mesh.position;
+
+				if ( o.tipo === 'cinematico' ) {
+
+					p.x += o.dir * o.velocidad * dt;
+					if ( p.x > o.origenX + o.rango ) { p.x = o.origenX + o.rango; o.dir = - 1; }
+					if ( p.x < o.origenX - o.rango ) { p.x = o.origenX - o.rango; o.dir = 1; }
+
+				} else if ( o.tipo === 'dinamico' ) {
+
+					p.x += o.vel.x * dt;
+					p.z += o.vel.z * dt;
+					o.vel.multiplyScalar( Math.max( 0, 1 - o.friccion * dt ) );
+
+					const lim = 985 - o.radio;
+					if ( p.x > lim ) { p.x = lim; o.vel.x *= - 0.7; }
+					if ( p.x < - lim ) { p.x = - lim; o.vel.x *= - 0.7; }
+					if ( p.z > lim ) { p.z = lim; o.vel.z *= - 0.7; }
+					if ( p.z < - lim ) { p.z = - lim; o.vel.z *= - 0.7; }
+
+					if ( o.rueda ) {
+
+						o.mesh.rotation.x += o.vel.z * dt / o.radio;
+						o.mesh.rotation.z -= o.vel.x * dt / o.radio;
+
+					}
+
+				}
+
+			}
+
+			for ( const o of objetos ) {
+
+				const p = o.mesh.position;
+				let dx = jugador.pos.x - p.x;
+				let dz = jugador.pos.z - p.z;
+				let dist = Math.hypot( dx, dz );
+				const minimo = jugador.radio + o.radio;
+				if ( dist >= minimo ) continue;
+
+				if ( dist < 0.001 ) { dx = 1; dz = 0; dist = 1; }
+				const nx = dx / dist;
+				const nz = dz / dist;
+				const solape = minimo - dist;
+
+				if ( o.tipo === 'dinamico' ) {
+
+					p.x -= nx * solape;
+					p.z -= nz * solape;
+					const fuerza = Math.max( velJugador, 80 ) * o.empuje;
+					o.vel.x = - nx * fuerza;
+					o.vel.z = - nz * fuerza;
+
+				} else {
+
+					jugador.pos.x += nx * solape;
+					jugador.pos.z += nz * solape;
+
+				}
+
+			}
+
+			for ( const d of objetos ) {
+
+				if ( d.tipo !== 'dinamico' ) continue;
+
+				for ( const s of objetos ) {
+
+					if ( s.tipo === 'dinamico' ) continue;
+
+					const pd = d.mesh.position;
+					const ps = s.mesh.position;
+					let dx = pd.x - ps.x;
+					let dz = pd.z - ps.z;
+					let dist = Math.hypot( dx, dz );
+					const minimo = d.radio + s.radio;
+					if ( dist >= minimo ) continue;
+
+					if ( dist < 0.001 ) { dx = 1; dz = 0; dist = 1; }
+					const nx = dx / dist;
+					const nz = dz / dist;
+
+					pd.x += nx * ( minimo - dist );
+					pd.z += nz * ( minimo - dist );
+
+					const vn = d.vel.x * nx + d.vel.z * nz;
+					if ( vn < 0 ) {
+
+						d.vel.x -= 1.7 * vn * nx;
+						d.vel.z -= 1.7 * vn * nz;
+
+					}
+
+				}
+
+			}
+
+		}
+
+		function animate() {
+
+			const dt = Math.min( clock.getDelta(), 0.05 );
+
+			if ( model ) {
+
+				jugador.angulo += ( jugador.anguloMeta - jugador.angulo ) * Math.min( 1, dt * 10 );
+
+				const vel = jugador.moviendo ? ( jugador.paso === 'run' ? 300 : 130 ) : 0;
+				const antes = jugador.pos.clone();
+
+				jugador.pos.x += Math.sin( jugador.angulo ) * vel * dt;
+				jugador.pos.z += Math.cos( jugador.angulo ) * vel * dt;
+
+				actualizarFisica( dt, vel );
+
+				jugador.pos.x = THREE.MathUtils.clamp( jugador.pos.x, - LIMITE, LIMITE );
+				jugador.pos.z = THREE.MathUtils.clamp( jugador.pos.z, - LIMITE, LIMITE );
+
+				const delta = jugador.pos.clone().sub( antes );
+				model.position.copy( jugador.pos );
+				model.rotation.y = jugador.angulo;
+
+				camera.position.add( delta );
+				controls.target.add( delta );
+
+				cambiarAccion( jugador.moviendo ? jugador.paso : 'idle' );
+
+				sol.position.set( jugador.pos.x + 250, 500, jugador.pos.z + 200 );
+				sol.target.position.copy( jugador.pos );
+
+			}
+
+			if ( mixer ) mixer.update( dt );
+
+			controls.update();
+			renderer.render( scene, camera );
+
+		}
+
+	</script>
+
+</body>
+</html>
